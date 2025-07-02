@@ -145,6 +145,7 @@ class CompleteHumanTracker:
         print("   • 3D head orientation (pitch, yaw, roll)")
         print("   • Eye gaze tracking")
         print("   • Body 3D orientation")
+        print("   • Enhanced leg detection")
         print("   • Ready for realistic character overlay!")
     
     def setup_camera_calibration(self, frame_width: int, frame_height: int):
@@ -320,7 +321,6 @@ class CompleteHumanTracker:
             return {"pitch": 0.0, "yaw": 0.0, "roll": 0.0}
         
         # Use specific facial landmarks for head pose
-        # Nose tip, chin, left eye corner, right eye corner, left mouth, right mouth
         nose_tip = np.array(face_3d_points[1], dtype=np.float32)
         chin = np.array(face_3d_points[175], dtype=np.float32) 
         left_eye = np.array(face_3d_points[33], dtype=np.float32)
@@ -417,7 +417,6 @@ class CompleteHumanTracker:
     
     def _calculate_facial_expressions(self, face_landmarks) -> Dict[str, float]:
         """Calculate basic facial expressions"""
-        # This is simplified - in production you'd use more sophisticated emotion detection
         landmarks = face_landmarks.landmark
         
         # Mouth landmarks for smile detection
@@ -472,7 +471,7 @@ class CompleteHumanTracker:
     
     def draw_complete_tracking(self, frame, frame_data: CompleteHumanFrame):
         """Draw all tracking data on frame with clear visual indicators"""
-        # Draw body pose
+        # Draw body pose with enhanced leg visualization
         if frame_data.body_keypoints_2d and len(frame_data.body_keypoints_2d) > 0:
             self._draw_body_pose(frame, frame_data.body_keypoints_2d)
         
@@ -497,11 +496,30 @@ class CompleteHumanTracker:
         if frame_data.head_pose:
             self._draw_head_pose_info(frame, frame_data.head_pose)
         
+        # Draw leg tracking status
+        if frame_data.body_keypoints_2d and len(frame_data.body_keypoints_2d) > 0:
+            # Check leg detection specifically
+            leg_indices = [11, 12, 13, 14, 15, 16]  # Hip, knee, ankle for both legs
+            leg_points_detected = 0
+            
+            for i in leg_indices:
+                idx = i * 3  # Each keypoint has x, y, confidence
+                if idx + 2 < len(frame_data.body_keypoints_2d):
+                    conf = frame_data.body_keypoints_2d[idx + 2]
+                    if conf > 0.3:
+                        leg_points_detected += 1
+            
+            if leg_points_detected > 0:
+                cv2.putText(frame, "LEG TRACKING ACTIVE", (300, 230), 
+                           cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 0), 2)
+                cv2.putText(frame, f"Leg Points: {leg_points_detected}/6", (300, 260), 
+                           cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 255, 0), 2)
+        
         # Draw 3D pose indicator
         if frame_data.body_keypoints_3d and len(frame_data.body_keypoints_3d) > 0:
-            cv2.putText(frame, "3D POSE ACTIVE", (300, 110), 
+            cv2.putText(frame, "3D POSE ACTIVE", (300, 290), 
                        cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 255, 0), 2)
-            cv2.putText(frame, f"3D Points: {len(frame_data.body_keypoints_3d)}", (300, 140), 
+            cv2.putText(frame, f"3D Points: {len(frame_data.body_keypoints_3d)}", (300, 320), 
                        cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 255, 0), 2)
         
         # Draw tracking info (ignore the broken status for now)
@@ -510,17 +528,15 @@ class CompleteHumanTracker:
         return frame
     
     def _draw_body_pose(self, frame, body_keypoints):
-        """Draw body pose skeleton"""
+        """Draw body pose skeleton with enhanced leg visualization"""
         if len(body_keypoints) < 51:  # 17 * 3
             return
         
         # COCO pose connections
-        connections = [
-            (5, 6), (5, 7), (7, 9), (6, 8), (8, 10),  # Arms
-            (5, 11), (6, 12), (11, 12),  # Torso
-            (11, 13), (13, 15), (12, 14), (14, 16),  # Legs
-            (0, 1), (0, 2), (1, 3), (2, 4)  # Head
-        ]
+        arm_connections = [(5, 7), (7, 9), (6, 8), (8, 10)]  # Arms
+        torso_connections = [(5, 6), (5, 11), (6, 12), (11, 12)]  # Torso
+        leg_connections = [(11, 13), (13, 15), (12, 14), (14, 16)]  # Legs
+        head_connections = [(0, 1), (0, 2), (1, 3), (2, 4)]  # Head
         
         # Extract points
         points = []
@@ -531,18 +547,81 @@ class CompleteHumanTracker:
             else:
                 points.append(None)
         
-        # Draw connections
-        for start_idx, end_idx in connections:
+        # Draw connections with different colors for different body parts
+        # Draw legs in bright green to make them obvious
+        for start_idx, end_idx in leg_connections:
             if start_idx < len(points) and end_idx < len(points):
                 start_point = points[start_idx]
                 end_point = points[end_idx]
                 if start_point and end_point:
-                    cv2.line(frame, start_point, end_point, (0, 255, 0), 3)
+                    cv2.line(frame, start_point, end_point, (0, 255, 0), 4)  # Thick green for legs
         
-        # Draw keypoints
-        for point in points:
+        # Draw torso in blue
+        for start_idx, end_idx in torso_connections:
+            if start_idx < len(points) and end_idx < len(points):
+                start_point = points[start_idx]
+                end_point = points[end_idx]
+                if start_point and end_point:
+                    cv2.line(frame, start_point, end_point, (255, 0, 0), 3)  # Blue for torso
+        
+        # Draw arms in yellow
+        for start_idx, end_idx in arm_connections:
+            if start_idx < len(points) and end_idx < len(points):
+                start_point = points[start_idx]
+                end_point = points[end_idx]
+                if start_point and end_point:
+                    cv2.line(frame, start_point, end_point, (0, 255, 255), 3)  # Yellow for arms
+        
+        # Draw head in white
+        for start_idx, end_idx in head_connections:
+            if start_idx < len(points) and end_idx < len(points):
+                start_point = points[start_idx]
+                end_point = points[end_idx]
+                if start_point and end_point:
+                    cv2.line(frame, start_point, end_point, (255, 255, 255), 3)  # White for head
+        
+        # Draw keypoints with special emphasis on leg points
+        coco_names = [
+            "nose", "left_eye", "right_eye", "left_ear", "right_ear",
+            "left_shoulder", "right_shoulder", "left_elbow", "right_elbow",
+            "left_wrist", "right_wrist", "left_hip", "right_hip",
+            "left_knee", "right_knee", "left_ankle", "right_ankle"
+        ]
+        
+        for i, point in enumerate(points):
             if point:
-                cv2.circle(frame, point, 5, (0, 0, 255), -1)
+                # Make leg keypoints larger and more colorful
+                if i in [11, 12, 13, 14, 15, 16]:  # Hip, knee, ankle indices
+                    cv2.circle(frame, point, 8, (0, 255, 0), -1)  # Large green circles for legs
+                    cv2.circle(frame, point, 10, (255, 255, 255), 2)  # White outline
+                    
+                    # Add labels for leg points
+                    if i < len(coco_names):
+                        label = coco_names[i].replace('_', ' ').title()
+                        cv2.putText(frame, label, (point[0] + 10, point[1]), 
+                                   cv2.FONT_HERSHEY_SIMPLEX, 0.4, (0, 255, 0), 1)
+                else:
+                    cv2.circle(frame, point, 5, (0, 0, 255), -1)  # Regular red circles for other points
+        
+        # Count and display leg detection status
+        leg_points = [points[i] for i in [11, 12, 13, 14, 15, 16] if i < len(points)]
+        detected_legs = sum(1 for p in leg_points if p is not None)
+        
+        if detected_legs > 0:
+            cv2.putText(frame, f"LEGS DETECTED: {detected_legs}/6 points", (300, 170), 
+                       cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 0), 2)
+            
+            # Show which specific leg parts are detected
+            leg_parts = ["L.Hip", "R.Hip", "L.Knee", "R.Knee", "L.Ankle", "R.Ankle"]
+            detected_parts = []
+            for i, part in enumerate(leg_parts):
+                if (11 + i) < len(points) and points[11 + i] is not None:
+                    detected_parts.append(part)
+            
+            if detected_parts:
+                parts_text = ", ".join(detected_parts)
+                cv2.putText(frame, f"Parts: {parts_text}", (300, 200), 
+                           cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 0), 1)
     
     def _draw_precision_hand(self, frame, hand_keypoints, color, hand_label):
         """Draw precision hand with connections"""
@@ -595,8 +674,6 @@ class CompleteHumanTracker:
             return
         
         # Draw key facial feature points to make it obvious face is detected
-        # Extract some key points and make them highly visible
-        
         # Draw every 15th landmark as larger circles to show face detection clearly
         for i in range(0, min(len(face_landmarks), 1400), 45):  # Every 15th landmark * 3
             if i + 1 < len(face_landmarks):

@@ -137,7 +137,7 @@ class StaticPoseExtractor:
         
         keypoints = tracking_data.body_keypoints_2d
         
-        # COCO to OpenPose mapping
+        # COCO to OpenPose mapping (improved)
         coco_to_openpose = {
             0: 0,   # nose -> nose
             1: 15,  # left_eye -> left_eye  
@@ -158,25 +158,36 @@ class StaticPoseExtractor:
             16: 10  # right_ankle -> right_ankle
         }
         
-        # OpenPose connections
-        openpose_connections = [
-            (0, 1), (1, 2), (2, 3), (3, 4),     # Head
-            (1, 5), (1, 8),                      # Neck to shoulders
-            (5, 6), (6, 7),                      # Left arm
-            (8, 9), (9, 10),                     # Right arm
-            (1, 11), (11, 12), (12, 13),        # Spine to left leg
-            (1, 8), (8, 14), (14, 15), (15, 16) # Spine to right leg
-        ]
-        
-        # Extract COCO keypoints
+        # Extract COCO keypoints with lower confidence threshold for head
         coco_points = {}
         for coco_idx in range(17):
             if coco_idx * 3 + 2 < len(keypoints):
                 x = keypoints[coco_idx * 3]
                 y = keypoints[coco_idx * 3 + 1]
                 conf = keypoints[coco_idx * 3 + 2]
-                if conf > 0.3:
+                
+                # Lower threshold for head keypoints (0-4)
+                threshold = 0.1 if coco_idx <= 4 else 0.3
+                
+                if conf > threshold:
                     coco_points[coco_idx] = (int(x), int(y))
+        
+        # If no head detected, estimate from shoulders
+        if 0 not in coco_points and (5 in coco_points and 6 in coco_points):
+            # Estimate head position from shoulders
+            left_shoulder = coco_points[5]
+            right_shoulder = coco_points[6] 
+            
+            # Calculate head position
+            center_x = (left_shoulder[0] + right_shoulder[0]) // 2
+            head_y = min(left_shoulder[1], right_shoulder[1]) - 60  # Above shoulders
+            
+            # Add estimated head points
+            coco_points[0] = (center_x, head_y)  # nose
+            coco_points[1] = (center_x - 15, head_y - 5)  # left eye
+            coco_points[2] = (center_x + 15, head_y - 5)  # right eye
+            
+            print(f"📍 Estimated head position from shoulders")
         
         # Convert to OpenPose format
         openpose_points = {}
@@ -184,18 +195,37 @@ class StaticPoseExtractor:
             if coco_idx in coco_points:
                 openpose_points[openpose_idx] = coco_points[coco_idx]
         
-        # Draw skeleton
-        # Draw connections
+        # OpenPose connections (improved)
+        openpose_connections = [
+            # Head connections
+            (0, 14), (14, 16), (0, 15), (15, 17),  # Face outline
+            (0, 1),   # Nose to neck
+            
+            # Body connections  
+            (1, 2), (1, 5), (1, 8),  # Neck to shoulders
+            (2, 3), (3, 4),  # Right arm
+            (5, 6), (6, 7),  # Left arm
+            (1, 11), (11, 12), (12, 13),  # Left leg
+            (1, 8), (8, 9), (9, 10),     # Right leg
+            (8, 11), # Connect hips
+        ]
+        
+        # Draw skeleton with better visibility
+        # Draw connections first
         for start_idx, end_idx in openpose_connections:
             if start_idx in openpose_points and end_idx in openpose_points:
                 start_point = openpose_points[start_idx]
                 end_point = openpose_points[end_idx]
-                cv2.line(pose_image, start_point, end_point, (255, 255, 255), 3)
+                cv2.line(pose_image, start_point, end_point, (255, 255, 255), 5)  # Thicker lines
         
-        # Draw keypoints
-        for point in openpose_points.values():
-            cv2.circle(pose_image, point, 6, (255, 255, 255), -1)
-            cv2.circle(pose_image, point, 8, (0, 255, 0), 2)
+        # Draw keypoints with emphasis on head
+        for idx, point in openpose_points.items():
+            if idx in [0, 14, 15, 16, 17]:  # Head keypoints
+                cv2.circle(pose_image, point, 10, (255, 255, 255), -1)  # Larger head points
+                cv2.circle(pose_image, point, 12, (0, 255, 0), 3)  # Green outline for head
+            else:
+                cv2.circle(pose_image, point, 8, (255, 255, 255), -1)
+                cv2.circle(pose_image, point, 10, (0, 255, 0), 2)
         
         return pose_image
 
@@ -545,9 +575,9 @@ class BatchImageProcessor:
             # Convert pose image to PIL
             pose_pil = Image.fromarray(pose_image)
             
-            # Generate prompts
-            prompt = self._generate_character_prompt(character)
-            negative_prompt = self._generate_negative_prompt()
+            # Generate prompts with more specific character details
+            prompt = self._generate_detailed_character_prompt(character)
+            negative_prompt = self._generate_enhanced_negative_prompt()
             
             print(f"🎨 Generating AI human for: {image_name}")
             print(f"📝 Prompt: {prompt[:80]}...")
@@ -556,23 +586,23 @@ class BatchImageProcessor:
             # Performance optimizations
             step_start_time = time.time()
             
-            # FAST GENERATION SETTINGS for speed
-            num_steps = 15 if self.device == "cuda" else 10  # Fewer steps for speed
+            # Improved generation settings
+            num_steps = 20 if self.device == "cuda" else 12  # More steps for better quality
             
-            print(f"⚡ Using {num_steps} steps for speed optimization")
+            print(f"⚡ Using {num_steps} steps for quality optimization")
             
-            # Generate image with speed optimizations
+            # Generate image with improved settings
             with torch.autocast(self.device):
                 result = self.pipe(
                     prompt=prompt,
                     negative_prompt=negative_prompt,
                     image=pose_pil,
-                    num_inference_steps=num_steps,  # REDUCED for speed
-                    guidance_scale=6.0,  # Slightly reduced for speed
-                    controlnet_conditioning_scale=0.8,
+                    num_inference_steps=num_steps,
+                    guidance_scale=7.5,  # Standard guidance for better results
+                    controlnet_conditioning_scale=1.0,  # Full pose control
                     generator=torch.Generator(device=self.device).manual_seed(42),
-                    # Speed optimizations
-                    eta=0.0,  # Deterministic for speed
+                    # Improved settings
+                    eta=0.0,  # Deterministic
                 )
             
             generation_time = time.time() - step_start_time
@@ -583,18 +613,86 @@ class BatchImageProcessor:
             print(f"✅ AI generation complete for: {image_name}")
             print(f"⏱️ Generation time: {generation_time:.1f} seconds")
             
-            # Performance warning
-            if generation_time > 300:  # More than 5 minutes
-                print(f"⚠️ SLOW GENERATION DETECTED!")
-                print(f"   Expected: 1-5 minutes")
-                print(f"   Actual: {generation_time/60:.1f} minutes")
-                print(f"   Check GPU usage with 'nvidia-smi' command")
+            # Performance info
+            if generation_time < 60:
+                print(f"🚀 Great performance: {generation_time:.1f}s")
+            elif generation_time < 300:
+                print(f"⚡ Good performance: {generation_time/60:.1f}m")
+            else:
+                print(f"⚠️ Slow generation: {generation_time/60:.1f}m")
             
             return generated_image
             
         except Exception as e:
             print(f"❌ AI generation error for {image_name}: {e}")
             return None
+    
+    def _generate_detailed_character_prompt(self, character: CharacterProfile) -> str:
+        """Generate detailed AI prompt for better results"""
+        prompt_parts = []
+        
+        # More specific base description
+        prompt_parts.append("full body portrait of a beautiful person")
+        
+        # Better age description
+        age_factor = character.facial.age_factor
+        if age_factor < 0.3:
+            prompt_parts.append("young woman with youthful features")
+        elif age_factor < 0.6:
+            prompt_parts.append("adult woman with mature features")
+        else:
+            prompt_parts.append("elegant mature woman")
+        
+        # Detailed hair description
+        hair_color = character.hair.color
+        if hair_color[0] > 0.8 and hair_color[1] > 0.7:  # Blonde
+            hair_desc = "beautiful blonde wavy hair"
+        elif hair_color[0] < 0.3 and hair_color[1] < 0.3:  # Black
+            hair_desc = "long black hair"
+        else:
+            hair_desc = "brown hair"
+        
+        prompt_parts.append(hair_desc)
+        
+        # Better eye description
+        eye_color = character.facial.eye_color
+        if eye_color[2] > 0.7:  # Blue
+            prompt_parts.append("piercing blue eyes")
+        elif eye_color[1] > 0.6:  # Green
+            prompt_parts.append("bright green eyes") 
+        else:
+            prompt_parts.append("beautiful brown eyes")
+        
+        # Detailed clothing
+        clothing_styles = {
+            "athletic_top": "wearing blue athletic sports top",
+            "dress_shirt": "wearing white dress shirt",
+            "casual_tshirt": "wearing casual t-shirt",
+            "sweater": "wearing cozy sweater"
+        }
+        
+        clothing_desc = clothing_styles.get(character.clothing.shirt_type, "wearing stylish blue top")
+        prompt_parts.append(clothing_desc)
+        
+        # Enhanced quality modifiers
+        prompt_parts.extend([
+            "professional photography", "studio lighting", "high resolution",
+            "detailed facial features", "natural skin texture", "perfect anatomy",
+            "photorealistic", "8k quality", "sharp focus"
+        ])
+        
+        return ", ".join(prompt_parts)
+    
+    def _generate_enhanced_negative_prompt(self) -> str:
+        """Generate enhanced negative prompt for better quality"""
+        return ("blurry, low quality, distorted, deformed, ugly, bad anatomy, "
+                "extra limbs, missing limbs, floating limbs, disconnected limbs, "
+                "malformed hands, extra fingers, mutated hands, poorly drawn hands, "
+                "poorly drawn face, mutation, mutated, bad proportions, cropped, "
+                "lowres, text, jpeg artifacts, signature, watermark, username, "
+                "duplicate, extra arms, extra legs, extra hands, poorly drawn eyes, "
+                "cross-eyed, out of frame, disfigured, gross proportions, "
+                "long neck, duplicate heads, multiple people")
     
     def _print_final_report(self, total_time: float, output_folder: str):
         """Print final processing report"""

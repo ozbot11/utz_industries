@@ -517,76 +517,42 @@ class OpenPoseBatchProcessor:
             return None
     
     def _generate_optimized_prompt(self, character: CharacterProfile, skeleton_scope: str = "full_body") -> str:
-        """Generate scope-aware prompt with MINIMAL changes for eye fix"""
+        """Generate scope-aware prompt - OPTIMIZED FOR TOKEN LIMIT"""
         prompt_parts = []
         
-        # Scope-specific base prompts (KEEP EXACTLY THE SAME AS WORKING VERSION)
+        # Essential base (shortened)
         if skeleton_scope == "portrait":
-            prompt_parts.append("photorealistic portrait")
-            prompt_parts.append("beautiful woman")
-            prompt_parts.append("head and shoulders")
-            prompt_parts.append("close-up")
+            prompt_parts.extend(["photorealistic portrait", "beautiful woman"])
         else:  # full_body
-            prompt_parts.append("photorealistic full body")
-            prompt_parts.append("beautiful woman") 
-            prompt_parts.append("complete figure")
-            prompt_parts.append("full body pose")
+            prompt_parts.extend(["photorealistic", "beautiful woman", "full body"])
         
-        # Enhanced facial features (KEEP THE SAME)
-        prompt_parts.append("perfect facial features")
-        prompt_parts.append("symmetrical face")
+        # Core facial features (streamlined)
+        prompt_parts.extend([
+            "perfect facial features", "symmetrical face", "young woman"
+        ])
         
-        # Character specifics (KEEP THE SAME)
-        age_factor = character.facial.age_factor
-        if age_factor < 0.4:
-            prompt_parts.append("young woman")
-        
-        # Enhanced features (KEEP THE SAME)
+        # Character specifics (shortened)
         hair_color = character.hair.color
         if hair_color[0] > 0.8 and hair_color[1] > 0.7:
-            prompt_parts.append("long blonde wavy hair")
+            prompt_parts.append("blonde wavy hair")
         
         eye_color = character.facial.eye_color
         if eye_color[2] > 0.7:
-            prompt_parts.append("bright blue eyes")
-            prompt_parts.append("beautiful eyelashes")
+            prompt_parts.extend(["bright blue eyes", "detailed pupils"])
         
-        # Facial details (KEEP THE SAME + MINIMAL EYE FIX)
-        prompt_parts.append("perfect nose")
-        prompt_parts.append("natural lips")
-        prompt_parts.append("clear skin")
+        # KEY FACIAL IMPROVEMENTS (condensed)
+        prompt_parts.extend([
+            "defined cheekbones", "smooth jawline", "radiant complexion"
+        ])
         
-        # MINIMAL EYE FIX: Add only one small eye detail
-        prompt_parts.append("detailed pupils")
-        
-        # TINY REALISM BOOST: Add minimal natural imperfection
-        prompt_parts.append("natural skin pores")
-        
-        # Clothing (only for full body) (KEEP THE SAME)
-        if skeleton_scope == "full_body":
-            clothing_styles = {
-                "athletic_top": "blue sports bra",
-                "dress_shirt": "white shirt", 
-                "casual_tshirt": "casual top",
-                "sweater": "sweater"
-            }
-            clothing = clothing_styles.get(character.clothing.shirt_type, "blue athletic top")
-            prompt_parts.append(clothing)
-        
-        # Quality terms (KEEP EXACTLY THE SAME)
-        if skeleton_scope == "portrait":
-            prompt_parts.extend([
-                "professional headshot", "studio portrait lighting",
-                "highly detailed face", "8k portrait", "sharp facial focus"
-            ])
-        else:  # full_body
-            prompt_parts.extend([
-                "professional photography", "studio lighting",
-                "highly detailed", "8k quality", "sharp focus"
-            ])
+        # Essential quality (minimal)
+        prompt_parts.extend([
+            "natural skin pores", "blue sports bra", "professional photography", "8k quality"
+        ])
         
         prompt = ", ".join(prompt_parts)
-        print(f"📝 {skeleton_scope.title()} prompt ({len(prompt.split())} words): {prompt}")
+        token_count = len(prompt.split())
+        print(f"📝 {skeleton_scope.title()} prompt ({token_count} words): {prompt}")
         return prompt
     
     def _generate_negative_prompt(self, skeleton_scope: str = "full_body") -> str:

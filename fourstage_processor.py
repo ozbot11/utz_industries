@@ -469,27 +469,27 @@ class FourStageProcessor:
         return prompt
     
     def _generate_stage4_prompt(self, character: CharacterProfile) -> str:
-        """Stage 4: Face perfection ONLY - STREAMLINED"""
+        """Stage 4: Face perfection ONLY - ENHANCED FOR BETTER FACIAL FEATURES"""
         prompt_parts = []
         
-        # Face focus (essential only)
+        # Enhanced face focus - more specific facial details
         prompt_parts.extend([
-            "perfect facial features", "beautiful face", "symmetrical features",
-            "defined cheekbones", "smooth jawline", "flawless skin",
-            "natural beauty"
+            "photorealistic close-up face", "perfect facial symmetry", "beautiful woman face",
+            "defined cheekbones", "smooth jawline", "natural full lips",
+            "perfect nose shape", "flawless complexion"
         ])
         
-        # Eyes (essential only)
+        # Enhanced eyes - more detailed
         eye_color = character.facial.eye_color
         if eye_color[2] > 0.7:
             prompt_parts.extend([
                 "bright blue eyes", "detailed pupils", "clear iris",
-                "beautiful eyelashes", "expressive eyes"
+                "natural eyelashes", "expressive gaze", "eye contact"
             ])
         
-        # Quality (minimal)
+        # Enhanced quality for face
         prompt_parts.extend([
-            "portrait photography", "soft lighting", "high resolution"
+            "professional portrait", "natural skin texture", "high detail"
         ])
         
         prompt = ", ".join(prompt_parts)
@@ -520,10 +520,12 @@ class FourStageProcessor:
                 "bad hair", "floating hair", "unnatural hair", "choppy hair"
             ])
         else:  # Stage 4
-            # Stage 4: Face
+            # Stage 4: Enhanced face negatives
             base_negative.extend([
-                "asymmetrical face", "distorted face", "bad eyes", "empty eyes",
-                "no pupils", "plastic skin"
+                "distorted face", "asymmetrical face", "malformed face", "bad eyes",
+                "empty eyes", "no pupils", "blank stare", "dead eyes",
+                "crooked nose", "unnatural lips", "plastic skin", "waxy skin",
+                "blurry face", "out of focus face"
             ])
         
         return ", ".join(base_negative)
@@ -629,9 +631,9 @@ class FourStageProcessor:
                     prompt=stage4_prompt,
                     negative_prompt=stage4_negative,
                     image=stage3_pil,
-                    strength=0.4,  # Moderate face refinement
-                    num_inference_steps=30,  # More steps for face quality
-                    guidance_scale=9.0,  # High guidance for facial features
+                    strength=0.6,  # Stronger refinement for better face
+                    num_inference_steps=35,  # More steps for facial quality
+                    guidance_scale=10.0,  # Very high guidance for facial precision
                     generator=torch.Generator(device=self.device).manual_seed(999),
                 )
             

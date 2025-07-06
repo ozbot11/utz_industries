@@ -450,36 +450,34 @@ class OpenPoseBatchProcessor:
             return None
     
     def _generate_optimized_prompt(self, character: CharacterProfile) -> str:
-        """Generate optimized prompt for photorealistic results"""
+        """Generate facial-feature-focused prompt for perfect realism"""
         prompt_parts = []
         
-        # More specific realism keywords
+        # Enhanced realism with facial focus
         prompt_parts.append("photorealistic portrait")
         prompt_parts.append("beautiful woman")
-        prompt_parts.append("front view")  # Force front-facing
+        prompt_parts.append("perfect facial features")
+        prompt_parts.append("symmetrical face")
         
-        # Character features
+        # Character specifics
         age_factor = character.facial.age_factor
         if age_factor < 0.4:
             prompt_parts.append("young woman")
         
-        # Hair (more specific)
+        # Enhanced facial features
         hair_color = character.hair.color
         if hair_color[0] > 0.8 and hair_color[1] > 0.7:
             prompt_parts.append("long blonde wavy hair")
-        elif hair_color[0] < 0.3:
-            prompt_parts.append("black hair")
-        else:
-            prompt_parts.append("brown hair")
         
-        # Eyes (more vivid)
         eye_color = character.facial.eye_color
         if eye_color[2] > 0.7:
             prompt_parts.append("bright blue eyes")
-        elif eye_color[1] > 0.6:
-            prompt_parts.append("green eyes")
-        else:
-            prompt_parts.append("brown eyes")
+            prompt_parts.append("beautiful eyelashes")
+        
+        # Facial details
+        prompt_parts.append("perfect nose")
+        prompt_parts.append("natural lips")
+        prompt_parts.append("clear skin")
         
         # Clothing
         clothing_styles = {
@@ -491,22 +489,24 @@ class OpenPoseBatchProcessor:
         clothing = clothing_styles.get(character.clothing.shirt_type, "blue athletic top")
         prompt_parts.append(clothing)
         
-        # Enhanced realism terms
+        # Enhanced quality terms for facial precision
         prompt_parts.extend([
-            "realistic skin texture", "professional photography",
-            "natural lighting", "highly detailed", "8k quality"
+            "professional photography", "studio lighting",
+            "highly detailed", "8k portrait", "sharp focus"
         ])
         
         prompt = ", ".join(prompt_parts)
-        print(f"📝 Enhanced prompt ({len(prompt.split())} words): {prompt}")
+        print(f"📝 Facial-enhanced prompt ({len(prompt.split())} words): {prompt}")
         return prompt
     
     def _generate_negative_prompt(self) -> str:
-        """Generate enhanced negative prompt for realism"""
-        return ("cartoon, anime, 3d render, cgi, digital art, "
+        """Generate facial-focused negative prompt"""
+        return ("distorted face, asymmetrical features, wrong eye shape, "
+                "crooked nose, unnatural mouth, facial deformity, "
+                "cartoon, anime, 3d render, cgi, digital art, "
                 "artificial, plastic, doll, toy, game character, "
                 "multiple people, extra person, floating limbs, "
-                "malformed hands, blurry, low quality, deformed, "
+                "malformed hands, blurry face, low quality, deformed, "
                 "back view, rear view, turned away")
     
     def _generate_human(self, skeleton: np.ndarray, character: CharacterProfile, image_name: str) -> Optional[np.ndarray]:
@@ -526,16 +526,16 @@ class OpenPoseBatchProcessor:
             
             start_time = time.time()
             
-            # Generate with enhanced settings for realism
+            # Generate with facial-precision settings
             with torch.autocast(self.device):
                 result = self.pipe(
                     prompt=prompt,
                     negative_prompt=negative_prompt,
                     image=skeleton_pil,
-                    num_inference_steps=25,  # Higher for better quality
-                    guidance_scale=8.0,      # Higher for better prompt following
-                    controlnet_conditioning_scale=1.1,  # Stronger pose control
-                    generator=torch.Generator(device=self.device).manual_seed(42),
+                    num_inference_steps=30,  # Higher for facial precision
+                    guidance_scale=8.5,      # Higher for better prompt adherence
+                    controlnet_conditioning_scale=1.0,  # Balanced pose control
+                    generator=torch.Generator(device=self.device).manual_seed(123),  # Different seed
                     width=512,
                     height=512,
                 )

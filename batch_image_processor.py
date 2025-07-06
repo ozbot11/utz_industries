@@ -1,5 +1,5 @@
 """
-OpenPose-Based Batch Processor
+OpenPose-Based Batch Processor - FIXED VERSION
 Uses dedicated OpenPose model for proper skeleton detection
 """
 
@@ -82,7 +82,7 @@ class OpenPoseSkeleton:
         else:
             print("❌ MediaPipe not available!")
             
-    def generate_openpose_skeleton(self, image_path: str) -> Optional[np.ndarray]:
+    def generate_openpose_skeleton(self, image_path: str) -> Optional[Tuple]:
         """Generate proper OpenPose skeleton from image"""
         try:
             # Load image
@@ -105,11 +105,12 @@ class OpenPoseSkeleton:
                 return None
             
             # Create OpenPose skeleton
-            skeleton = self._create_openpose_skeleton(results.pose_landmarks, h, w)
+            skeleton_result = self._create_openpose_skeleton(results.pose_landmarks, h, w)
             
-            if skeleton is not None:
-                print(f"✅ Generated OpenPose skeleton")
-                return skeleton
+            if skeleton_result is not None:
+                skeleton, scope = skeleton_result
+                print(f"✅ Generated OpenPose skeleton ({scope})")
+                return skeleton, scope
             else:
                 print(f"❌ Failed to create skeleton")
                 return None
@@ -118,30 +119,41 @@ class OpenPoseSkeleton:
             print(f"❌ Error: {e}")
             return None
     
-    def _create_openpose_skeleton(self, pose_landmarks, height: int, width: int) -> np.ndarray:
+    def _create_openpose_skeleton(self, pose_landmarks, height: int, width: int) -> Optional[Tuple]:
         """Create refined OpenPose skeleton with anatomical corrections"""
-        # Create blank canvas
-        skeleton = np.zeros((height, width, 3), dtype=np.uint8)
-        
-        # Extract and validate landmarks
-        landmarks = []
-        for i, landmark in enumerate(pose_landmarks.landmark):
-            x = int(landmark.x * width)
-            y = int(landmark.y * height)
-            visibility = landmark.visibility
-            landmarks.append((x, y, visibility))
-        
-        # Create refined skeleton with anatomical corrections
-        refined_points = self._refine_skeleton_anatomy(landmarks, width, height)
-        
-        if len(refined_points) < 8:  # Need minimum points for valid skeleton
-            print(f"   Insufficient refined points: {len(refined_points)}")
+        try:
+            # Create blank canvas
+            skeleton = np.zeros((height, width, 3), dtype=np.uint8)
+            
+            # Extract and validate landmarks
+            landmarks = []
+            for i, landmark in enumerate(pose_landmarks.landmark):
+                x = int(landmark.x * width)
+                y = int(landmark.y * height)
+                visibility = landmark.visibility
+                landmarks.append((x, y, visibility))
+            
+            # Create refined skeleton with anatomical corrections
+            refined_points = self._refine_skeleton_anatomy(landmarks, width, height)
+            
+            if not refined_points or len(refined_points) < 8:  # Need minimum points for valid skeleton
+                print(f"   Insufficient refined points: {len(refined_points) if refined_points else 0}")
+                return None
+            
+            # Analyze skeleton scope (full body vs portrait)
+            skeleton_scope = self._analyze_skeleton_scope(refined_points)
+            
+            # Draw skeleton with improved connections
+            skeleton = self._draw_refined_skeleton(skeleton, refined_points)
+            
+            print(f"   Refined to {len(refined_points)} anatomically correct points")
+            
+            # Return both skeleton and scope info
+            return skeleton, skeleton_scope
+            
+        except Exception as e:
+            print(f"   Error creating skeleton: {e}")
             return None
-        
-        # Draw skeleton with improved connections
-        skeleton = self._draw_refined_skeleton(skeleton, refined_points)
-        
-        return skeleton
     
     def _refine_skeleton_anatomy(self, landmarks: List, width: int, height: int) -> Dict:
         """Refine skeleton to fix anatomical proportions"""
@@ -251,8 +263,55 @@ class OpenPoseSkeleton:
             if point is not None:
                 refined_points[idx] = point
         
-        print(f"   Refined to {len(refined_points)} anatomically correct points")
+        # CRITICAL FIX: Return the refined_points dictionary
         return refined_points
+        
+    def _analyze_skeleton_scope(self, refined_points: Dict) -> str:
+        """Analyze skeleton to determine if it's full body or portrait"""
+        
+        # Check for key body parts
+        has_head = 0 in refined_points or 1 in refined_points  # Nose or neck
+        has_shoulders = 2 in refined_points or 5 in refined_points  # Either shoulder
+        has_hips = 8 in refined_points or 9 in refined_points or 12 in refined_points  # Any hip
+        has_legs = any(idx in refined_points for idx in [10, 11, 13, 14])  # Any leg joint
+        has_arms = any(idx in refined_points for idx in [3, 4, 6, 7])  # Any arm joint
+        
+        # Count body regions
+        body_regions = 0
+        if has_head:
+            body_regions += 1
+        if has_shoulders:
+            body_regions += 1  
+        if has_hips:
+            body_regions += 1
+        if has_legs:
+            body_regions += 1
+        if has_arms:
+            body_regions += 1
+        
+        # Calculate vertical span (head to feet)
+        y_coords = [point[1] for point in refined_points.values()]
+        if len(y_coords) >= 2:
+            vertical_span = max(y_coords) - min(y_coords)
+        else:
+            vertical_span = 0
+        
+        # Decision logic
+        if body_regions >= 4 and has_legs and vertical_span > 200:
+            scope = "full_body"
+            print(f"   Detected FULL BODY skeleton ({body_regions} regions, span: {vertical_span}px)")
+        elif has_head and (has_shoulders or has_arms) and body_regions >= 2:
+            scope = "portrait"
+            print(f"   Detected PORTRAIT skeleton ({body_regions} regions, span: {vertical_span}px)")
+        else:
+            # Default based on point count
+            if len(refined_points) >= 10:
+                scope = "full_body"
+            else:
+                scope = "portrait"
+            print(f"   Default scope: {scope.upper()} ({len(refined_points)} points)")
+        
+        return scope
     
     def _fix_arm_proportions(self, shoulder: Tuple, elbow: Tuple, wrist: Tuple, side: str) -> Tuple:
         """Fix arm proportions to look more natural"""
@@ -333,6 +392,9 @@ class OpenPoseSkeleton:
             (8, 12), (12, 13), (13, 14), # Left leg: mid-hip->hip->knee->ankle
         ]
         
+        # Count valid connections
+        connections_drawn = 0
+        
         # Draw connections with varying thickness for importance
         for start_idx, end_idx in connections:
             if start_idx in refined_points and end_idx in refined_points:
@@ -348,8 +410,10 @@ class OpenPoseSkeleton:
                     thickness = 4
                 
                 cv2.line(skeleton, start_point, end_point, (255, 255, 255), thickness)
+                connections_drawn += 1
         
         # Draw keypoints with importance-based sizes
+        points_drawn = 0
         for idx, point in refined_points.items():
             if idx == 0:  # Head/nose
                 cv2.circle(skeleton, point, 10, (255, 255, 255), -1)
@@ -359,6 +423,9 @@ class OpenPoseSkeleton:
                 cv2.circle(skeleton, point, 7, (255, 255, 255), -1)
             else:  # Other joints
                 cv2.circle(skeleton, point, 6, (255, 255, 255), -1)
+            points_drawn += 1
+        
+        print(f"   Drew {points_drawn} points, {connections_drawn} connections")
         
         return skeleton
 
@@ -449,13 +516,23 @@ class OpenPoseBatchProcessor:
             print(f"❌ Error loading character: {e}")
             return None
     
-    def _generate_optimized_prompt(self, character: CharacterProfile) -> str:
-        """Generate facial-feature-focused prompt for perfect realism"""
+    def _generate_optimized_prompt(self, character: CharacterProfile, skeleton_scope: str = "full_body") -> str:
+        """Generate scope-aware prompt (full body vs portrait)"""
         prompt_parts = []
         
-        # Enhanced realism with facial focus
-        prompt_parts.append("photorealistic portrait")
-        prompt_parts.append("beautiful woman")
+        # Scope-specific base prompts
+        if skeleton_scope == "portrait":
+            prompt_parts.append("photorealistic portrait")
+            prompt_parts.append("beautiful woman")
+            prompt_parts.append("head and shoulders")
+            prompt_parts.append("close-up")
+        else:  # full_body
+            prompt_parts.append("photorealistic full body")
+            prompt_parts.append("beautiful woman") 
+            prompt_parts.append("complete figure")
+            prompt_parts.append("full body pose")
+        
+        # Enhanced facial features (always important)
         prompt_parts.append("perfect facial features")
         prompt_parts.append("symmetrical face")
         
@@ -464,7 +541,7 @@ class OpenPoseBatchProcessor:
         if age_factor < 0.4:
             prompt_parts.append("young woman")
         
-        # Enhanced facial features
+        # Enhanced features
         hair_color = character.hair.color
         if hair_color[0] > 0.8 and hair_color[1] > 0.7:
             prompt_parts.append("long blonde wavy hair")
@@ -479,38 +556,62 @@ class OpenPoseBatchProcessor:
         prompt_parts.append("natural lips")
         prompt_parts.append("clear skin")
         
-        # Clothing
-        clothing_styles = {
-            "athletic_top": "blue sports bra",
-            "dress_shirt": "white shirt",
-            "casual_tshirt": "casual top",
-            "sweater": "sweater"
-        }
-        clothing = clothing_styles.get(character.clothing.shirt_type, "blue athletic top")
-        prompt_parts.append(clothing)
+        # Clothing (only for full body)
+        if skeleton_scope == "full_body":
+            clothing_styles = {
+                "athletic_top": "blue sports bra",
+                "dress_shirt": "white shirt", 
+                "casual_tshirt": "casual top",
+                "sweater": "sweater"
+            }
+            clothing = clothing_styles.get(character.clothing.shirt_type, "blue athletic top")
+            prompt_parts.append(clothing)
         
-        # Enhanced quality terms for facial precision
-        prompt_parts.extend([
-            "professional photography", "studio lighting",
-            "highly detailed", "8k portrait", "sharp focus"
-        ])
+        # Quality terms
+        if skeleton_scope == "portrait":
+            prompt_parts.extend([
+                "professional headshot", "studio portrait lighting",
+                "highly detailed face", "8k portrait", "sharp facial focus"
+            ])
+        else:  # full_body
+            prompt_parts.extend([
+                "professional photography", "studio lighting",
+                "highly detailed", "8k quality", "sharp focus"
+            ])
         
         prompt = ", ".join(prompt_parts)
-        print(f"📝 Facial-enhanced prompt ({len(prompt.split())} words): {prompt}")
+        print(f"📝 {skeleton_scope.title()} prompt ({len(prompt.split())} words): {prompt}")
         return prompt
     
-    def _generate_negative_prompt(self) -> str:
-        """Generate facial-focused negative prompt"""
-        return ("distorted face, asymmetrical features, wrong eye shape, "
-                "crooked nose, unnatural mouth, facial deformity, "
-                "cartoon, anime, 3d render, cgi, digital art, "
-                "artificial, plastic, doll, toy, game character, "
-                "multiple people, extra person, floating limbs, "
-                "malformed hands, blurry face, low quality, deformed, "
-                "back view, rear view, turned away")
+    def _generate_negative_prompt(self, skeleton_scope: str = "full_body") -> str:
+        """Generate scope-aware negative prompt"""
+        base_negative = [
+            "distorted face", "asymmetrical features", "wrong eye shape",
+            "crooked nose", "unnatural mouth", "facial deformity",
+            "cartoon", "anime", "3d render", "cgi", "digital art",
+            "artificial", "plastic", "doll", "toy", "game character",
+            "multiple people", "extra person", "malformed hands",
+            "blurry face", "low quality", "deformed"
+        ]
+        
+        if skeleton_scope == "portrait":
+            # Portrait-specific negatives
+            base_negative.extend([
+                "full body", "legs", "feet", "torso showing",
+                "cropped awkwardly", "body parts", "shoulders cut off"
+            ])
+        else:  # full_body
+            # Full body specific negatives
+            base_negative.extend([
+                "floating limbs", "disconnected body parts",
+                "cropped legs", "missing limbs", "incomplete body",
+                "back view", "rear view", "turned away"
+            ])
+        
+        return ", ".join(base_negative)
     
-    def _generate_human(self, skeleton: np.ndarray, character: CharacterProfile, image_name: str) -> Optional[np.ndarray]:
-        """Generate AI human from OpenPose skeleton"""
+    def _generate_human(self, skeleton: np.ndarray, skeleton_scope: str, character: CharacterProfile, image_name: str) -> Optional[np.ndarray]:
+        """Generate AI human with scope-aware prompting"""
         if not self.pipe:
             return None
         
@@ -518,24 +619,34 @@ class OpenPoseBatchProcessor:
             # Convert skeleton to PIL
             skeleton_pil = Image.fromarray(skeleton)
             
-            # Generate prompts
-            prompt = self._generate_optimized_prompt(character)
-            negative_prompt = self._generate_negative_prompt()
+            # Generate scope-appropriate prompts
+            prompt = self._generate_optimized_prompt(character, skeleton_scope)
+            negative_prompt = self._generate_negative_prompt(skeleton_scope)
             
-            print(f"🎨 Generating human for: {image_name}")
+            print(f"🎨 Generating {skeleton_scope} for: {image_name}")
             
             start_time = time.time()
             
-            # Generate with facial-precision settings
+            # Scope-specific generation settings
+            if skeleton_scope == "portrait":
+                steps = 35  # More steps for facial detail
+                guidance = 9.0  # Higher guidance for face
+                control_scale = 0.9  # Slightly lower pose control for natural face
+            else:  # full_body
+                steps = 30
+                guidance = 8.5
+                control_scale = 1.0
+            
+            # Generate with scope-optimized settings
             with torch.autocast(self.device):
                 result = self.pipe(
                     prompt=prompt,
                     negative_prompt=negative_prompt,
                     image=skeleton_pil,
-                    num_inference_steps=30,  # Higher for facial precision
-                    guidance_scale=8.5,      # Higher for better prompt adherence
-                    controlnet_conditioning_scale=1.0,  # Balanced pose control
-                    generator=torch.Generator(device=self.device).manual_seed(123),  # Different seed
+                    num_inference_steps=steps,
+                    guidance_scale=guidance,
+                    controlnet_conditioning_scale=control_scale,
+                    generator=torch.Generator(device=self.device).manual_seed(123),
                     width=512,
                     height=512,
                 )
@@ -543,7 +654,7 @@ class OpenPoseBatchProcessor:
             generation_time = time.time() - start_time
             generated_image = np.array(result.images[0])
             
-            print(f"✅ Generated in {generation_time:.1f}s")
+            print(f"✅ Generated {skeleton_scope} in {generation_time:.1f}s")
             return generated_image
             
         except Exception as e:
@@ -592,11 +703,13 @@ class OpenPoseBatchProcessor:
                 
                 try:
                     # Generate OpenPose skeleton
-                    skeleton = self.skeleton_generator.generate_openpose_skeleton(str(image_file))
+                    skeleton_result = self.skeleton_generator.generate_openpose_skeleton(str(image_file))
                     
-                    if skeleton is not None:
+                    if skeleton_result is not None:
+                        skeleton, skeleton_scope = skeleton_result
+                        
                         # Generate AI human
-                        ai_result = self._generate_human(skeleton, character, image_file.name)
+                        ai_result = self._generate_human(skeleton, skeleton_scope, character, image_file.name)
                         
                         if ai_result is not None:
                             # Save results

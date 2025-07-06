@@ -119,35 +119,11 @@ class OpenPoseSkeleton:
             return None
     
     def _create_openpose_skeleton(self, pose_landmarks, height: int, width: int) -> np.ndarray:
-        """Create proper OpenPose skeleton format"""
+        """Create refined OpenPose skeleton with anatomical corrections"""
         # Create blank canvas
         skeleton = np.zeros((height, width, 3), dtype=np.uint8)
         
-        # MediaPipe to OpenPose mapping (25 points for full OpenPose)
-        mp_to_openpose = {
-            # OpenPose 25-point model mapping
-            0: 0,   # Nose
-            1: None,  # Neck (calculated)
-            2: 12,  # Right Shoulder
-            3: 14,  # Right Elbow  
-            4: 16,  # Right Wrist
-            5: 11,  # Left Shoulder
-            6: 13,  # Left Elbow
-            7: 15,  # Left Wrist
-            8: 24,  # Mid Hip
-            9: 26,  # Right Hip
-            10: 28, # Right Knee
-            11: 32, # Right Ankle
-            12: 23, # Left Hip
-            13: 25, # Left Knee
-            14: 29, # Left Ankle
-            15: 2,  # Right Eye
-            16: 5,  # Left Eye
-            17: 8,  # Right Ear
-            18: 7,  # Left Ear
-        }
-        
-        # Extract landmarks
+        # Extract and validate landmarks
         landmarks = []
         for i, landmark in enumerate(pose_landmarks.landmark):
             x = int(landmark.x * width)
@@ -155,80 +131,234 @@ class OpenPoseSkeleton:
             visibility = landmark.visibility
             landmarks.append((x, y, visibility))
         
-        # Convert to OpenPose points
-        openpose_points = {}
+        # Create refined skeleton with anatomical corrections
+        refined_points = self._refine_skeleton_anatomy(landmarks, width, height)
         
-        # Map direct points
-        for op_idx, mp_idx in mp_to_openpose.items():
-            if mp_idx is not None and mp_idx < len(landmarks):
-                x, y, vis = landmarks[mp_idx]
-                if vis > 0.5:  # Only use visible points
-                    openpose_points[op_idx] = (x, y)
+        if len(refined_points) < 8:  # Need minimum points for valid skeleton
+            print(f"   Insufficient refined points: {len(refined_points)}")
+            return None
         
-        # Calculate neck (between shoulders)
-        if 11 < len(landmarks) and 12 < len(landmarks):  # Left and right shoulders
-            left_shoulder = landmarks[11]
-            right_shoulder = landmarks[12]
-            if left_shoulder[2] > 0.5 and right_shoulder[2] > 0.5:
-                neck_x = (left_shoulder[0] + right_shoulder[0]) // 2
-                neck_y = (left_shoulder[1] + right_shoulder[1]) // 2
-                openpose_points[1] = (neck_x, neck_y)
+        # Draw skeleton with improved connections
+        skeleton = self._draw_refined_skeleton(skeleton, refined_points)
         
-        # Calculate mid-hip if missing
-        if 8 not in openpose_points and 23 < len(landmarks) and 24 < len(landmarks):
-            left_hip = landmarks[23]
-            right_hip = landmarks[24]
-            if left_hip[2] > 0.5 and right_hip[2] > 0.5:
-                hip_x = (left_hip[0] + right_hip[0]) // 2
-                hip_y = (left_hip[1] + right_hip[1]) // 2
-                openpose_points[8] = (hip_x, hip_y)
+        return skeleton
+    
+    def _refine_skeleton_anatomy(self, landmarks: List, width: int, height: int) -> Dict:
+        """Refine skeleton to fix anatomical proportions"""
+        refined_points = {}
         
-        # Draw skeleton with proper OpenPose connections
-        openpose_connections = [
-            # Head
+        # Key MediaPipe landmark indices
+        NOSE = 0
+        LEFT_SHOULDER = 11
+        RIGHT_SHOULDER = 12
+        LEFT_ELBOW = 13
+        RIGHT_ELBOW = 14
+        LEFT_WRIST = 15
+        RIGHT_WRIST = 16
+        LEFT_HIP = 23
+        RIGHT_HIP = 24
+        LEFT_KNEE = 25
+        RIGHT_KNEE = 26
+        LEFT_ANKLE = 27
+        RIGHT_ANKLE = 28
+        
+        # Extract core points with validation
+        def get_point(idx, min_visibility=0.5):
+            if idx < len(landmarks) and landmarks[idx][2] > min_visibility:
+                x, y, vis = landmarks[idx]
+                # Clamp to image bounds
+                x = max(0, min(x, width - 1))
+                y = max(0, min(y, height - 1))
+                return (x, y)
+            return None
+        
+        # Get core structural points
+        nose = get_point(NOSE, 0.3)  # Lower threshold for head
+        left_shoulder = get_point(LEFT_SHOULDER)
+        right_shoulder = get_point(RIGHT_SHOULDER)
+        left_elbow = get_point(LEFT_ELBOW)
+        right_elbow = get_point(RIGHT_ELBOW)
+        left_wrist = get_point(LEFT_WRIST)
+        right_wrist = get_point(RIGHT_WRIST)
+        left_hip = get_point(LEFT_HIP)
+        right_hip = get_point(RIGHT_HIP)
+        left_knee = get_point(LEFT_KNEE)
+        right_knee = get_point(RIGHT_KNEE)
+        left_ankle = get_point(LEFT_ANKLE)
+        right_ankle = get_point(RIGHT_ANKLE)
+        
+        # Calculate derived points with anatomical constraints
+        
+        # 1. Neck (between shoulders, above both)
+        neck = None
+        if left_shoulder and right_shoulder:
+            neck_x = (left_shoulder[0] + right_shoulder[0]) // 2
+            neck_y = min(left_shoulder[1], right_shoulder[1]) - 10  # Slightly above shoulders
+            neck = (neck_x, max(neck_y, 0))
+        
+        # 2. Mid-hip (between hips)
+        mid_hip = None
+        if left_hip and right_hip:
+            mid_hip_x = (left_hip[0] + right_hip[0]) // 2
+            mid_hip_y = (left_hip[1] + right_hip[1]) // 2
+            mid_hip = (mid_hip_x, mid_hip_y)
+        
+        # 3. Anatomical arm corrections
+        if left_shoulder and left_elbow and left_wrist:
+            # Fix left arm proportions
+            left_elbow, left_wrist = self._fix_arm_proportions(
+                left_shoulder, left_elbow, left_wrist, "left"
+            )
+        
+        if right_shoulder and right_elbow and right_wrist:
+            # Fix right arm proportions
+            right_elbow, right_wrist = self._fix_arm_proportions(
+                right_shoulder, right_elbow, right_wrist, "right"
+            )
+        
+        # 4. Leg proportion fixes
+        if left_hip and left_knee and left_ankle:
+            left_knee, left_ankle = self._fix_leg_proportions(
+                left_hip, left_knee, left_ankle
+            )
+        
+        if right_hip and right_knee and right_ankle:
+            right_knee, right_ankle = self._fix_leg_proportions(
+                right_hip, right_knee, right_ankle
+            )
+        
+        # Map to OpenPose indices with refined points
+        openpose_mapping = {
+            0: nose,           # Nose
+            1: neck,           # Neck
+            2: right_shoulder, # Right shoulder
+            3: right_elbow,    # Right elbow
+            4: right_wrist,    # Right wrist
+            5: left_shoulder,  # Left shoulder
+            6: left_elbow,     # Left elbow
+            7: left_wrist,     # Left wrist
+            8: mid_hip,        # Mid hip
+            9: right_hip,      # Right hip
+            10: right_knee,    # Right knee
+            11: right_ankle,   # Right ankle
+            12: left_hip,      # Left hip
+            13: left_knee,     # Left knee
+            14: left_ankle,    # Left ankle
+        }
+        
+        # Add only valid points
+        for idx, point in openpose_mapping.items():
+            if point is not None:
+                refined_points[idx] = point
+        
+        print(f"   Refined to {len(refined_points)} anatomically correct points")
+        return refined_points
+    
+    def _fix_arm_proportions(self, shoulder: Tuple, elbow: Tuple, wrist: Tuple, side: str) -> Tuple:
+        """Fix arm proportions to look more natural"""
+        # Calculate arm vectors
+        upper_arm = np.array(elbow) - np.array(shoulder)
+        forearm = np.array(wrist) - np.array(elbow)
+        
+        # Ideal proportions: upper arm ≈ forearm length
+        upper_arm_length = np.linalg.norm(upper_arm)
+        forearm_length = np.linalg.norm(forearm)
+        
+        if upper_arm_length > 0 and forearm_length > 0:
+            # Normalize forearm to be similar length to upper arm
+            ideal_forearm_length = upper_arm_length * 0.9  # Slightly shorter
+            
+            if forearm_length > 0:
+                forearm_unit = forearm / forearm_length
+                corrected_forearm = forearm_unit * ideal_forearm_length
+                corrected_wrist = tuple((np.array(elbow) + corrected_forearm).astype(int))
+            else:
+                corrected_wrist = wrist
+            
+            # Ensure elbow is reasonable distance from shoulder
+            if upper_arm_length > 150:  # Too far
+                elbow_unit = upper_arm / upper_arm_length
+                corrected_upper_arm = elbow_unit * 120  # Reasonable upper arm length
+                corrected_elbow = tuple((np.array(shoulder) + corrected_upper_arm).astype(int))
+            else:
+                corrected_elbow = elbow
+            
+            return corrected_elbow, corrected_wrist
+        
+        return elbow, wrist
+    
+    def _fix_leg_proportions(self, hip: Tuple, knee: Tuple, ankle: Tuple) -> Tuple:
+        """Fix leg proportions to look more natural"""
+        # Calculate leg vectors
+        thigh = np.array(knee) - np.array(hip)
+        shin = np.array(ankle) - np.array(knee)
+        
+        # Ideal proportions: thigh ≈ shin length
+        thigh_length = np.linalg.norm(thigh)
+        shin_length = np.linalg.norm(shin)
+        
+        if thigh_length > 0 and shin_length > 0:
+            # Normalize shin to be similar length to thigh
+            ideal_shin_length = thigh_length * 0.95
+            
+            if shin_length > 0:
+                shin_unit = shin / shin_length
+                corrected_shin = shin_unit * ideal_shin_length
+                corrected_ankle = tuple((np.array(knee) + corrected_shin).astype(int))
+            else:
+                corrected_ankle = ankle
+            
+            return knee, corrected_ankle
+        
+        return knee, ankle
+    
+    def _draw_refined_skeleton(self, skeleton: np.ndarray, refined_points: Dict) -> np.ndarray:
+        """Draw refined skeleton with better proportions"""
+        
+        # Essential OpenPose connections (anatomically correct)
+        connections = [
+            # Head and neck
             (0, 1),   # Nose to neck
-            (0, 15), (15, 17),  # Right eye/ear
-            (0, 16), (16, 18),  # Left eye/ear
             
-            # Arms
-            (1, 2), (2, 3), (3, 4),  # Right arm
-            (1, 5), (5, 6), (6, 7),  # Left arm
+            # Arms (with proper proportions)
+            (1, 2), (2, 3), (3, 4),  # Right arm: neck->shoulder->elbow->wrist
+            (1, 5), (5, 6), (6, 7),  # Left arm: neck->shoulder->elbow->wrist
             
-            # Torso
-            (1, 8),  # Neck to mid-hip
-            (2, 9), (5, 12),  # Shoulders to hips
+            # Torso structure
+            (1, 8),  # Neck to mid-hip (main spine)
+            (2, 9), (5, 12),  # Shoulders to respective hips
             
-            # Legs  
-            (8, 9), (9, 10), (10, 11),  # Right leg
-            (8, 12), (12, 13), (13, 14), # Left leg
+            # Legs (with proper proportions)
+            (8, 9), (9, 10), (10, 11),  # Right leg: mid-hip->hip->knee->ankle
+            (8, 12), (12, 13), (13, 14), # Left leg: mid-hip->hip->knee->ankle
         ]
         
-        # Draw connections
-        valid_connections = 0
-        for start_idx, end_idx in openpose_connections:
-            if start_idx in openpose_points and end_idx in openpose_points:
-                start_point = openpose_points[start_idx]
-                end_point = openpose_points[end_idx]
+        # Draw connections with varying thickness for importance
+        for start_idx, end_idx in connections:
+            if start_idx in refined_points and end_idx in refined_points:
+                start_point = refined_points[start_idx]
+                end_point = refined_points[end_idx]
                 
-                # Draw thick white lines
-                cv2.line(skeleton, start_point, end_point, (255, 255, 255), 4)
-                valid_connections += 1
+                # Main structural lines thicker
+                if (start_idx, end_idx) in [(0, 1), (1, 8)]:  # Head-neck-spine
+                    thickness = 6
+                elif start_idx == 1 or end_idx == 1:  # Connections to neck
+                    thickness = 5
+                else:
+                    thickness = 4
+                
+                cv2.line(skeleton, start_point, end_point, (255, 255, 255), thickness)
         
-        # Draw keypoints
-        for idx, point in openpose_points.items():
-            if idx == 0:  # Nose - most important
+        # Draw keypoints with importance-based sizes
+        for idx, point in refined_points.items():
+            if idx == 0:  # Head/nose
+                cv2.circle(skeleton, point, 10, (255, 255, 255), -1)
+            elif idx in [1, 8]:  # Neck and mid-hip (structural)
                 cv2.circle(skeleton, point, 8, (255, 255, 255), -1)
-            elif idx in [1, 8]:  # Neck and mid-hip - structural
+            elif idx in [2, 5, 9, 12]:  # Shoulders and hips
+                cv2.circle(skeleton, point, 7, (255, 255, 255), -1)
+            else:  # Other joints
                 cv2.circle(skeleton, point, 6, (255, 255, 255), -1)
-            else:
-                cv2.circle(skeleton, point, 5, (255, 255, 255), -1)
-        
-        print(f"   Drew {len(openpose_points)} points, {valid_connections} connections")
-        
-        # Validate skeleton quality
-        if len(openpose_points) < 8 or valid_connections < 5:
-            print(f"   Skeleton quality too low")
-            return None
         
         return skeleton
 

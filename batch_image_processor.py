@@ -559,6 +559,9 @@ class OpenPoseBatchProcessor:
         # MINIMAL EYE FIX: Add only one small eye detail
         prompt_parts.append("detailed pupils")
         
+        # TINY REALISM BOOST: Add minimal natural imperfection
+        prompt_parts.append("natural skin pores")
+        
         # Clothing (only for full body) (KEEP THE SAME)
         if skeleton_scope == "full_body":
             clothing_styles = {
@@ -600,6 +603,11 @@ class OpenPoseBatchProcessor:
         # MINIMAL EYE FIX: Add only essential eye negatives
         base_negative.extend([
             "empty eyes", "no pupils", "blank eyes"
+        ])
+        
+        # TINY REALISM BOOST: Prevent over-perfection
+        base_negative.extend([
+            "overly smooth skin", "poreless skin", "too perfect"
         ])
         
         if skeleton_scope == "portrait":
@@ -654,7 +662,7 @@ class OpenPoseBatchProcessor:
                     num_inference_steps=steps,
                     guidance_scale=guidance,
                     controlnet_conditioning_scale=control_scale,
-                    generator=torch.Generator(device=self.device).manual_seed(123),  # KEEP SAME SEED
+                    generator=torch.Generator(device=self.device).manual_seed(123),  # KEEP SAME SEED THAT WORKS
                     width=512,
                     height=512,
                 )

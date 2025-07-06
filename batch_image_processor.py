@@ -1,6 +1,6 @@
 """
-OpenPose-Based Batch Processor - FIXED VERSION
-Uses dedicated OpenPose model for proper skeleton detection
+OpenPose-Based Batch Processor - REFINED FROM WORKING VERSION
+Minimal changes to fix eye pupils while keeping amazing quality
 """
 
 import cv2
@@ -62,7 +62,7 @@ except ImportError:
 from realistic_character_creator import CharacterProfile, FacialFeatures, BodyFeatures, HairFeatures, ClothingFeatures
 
 class OpenPoseSkeleton:
-    """Dedicated OpenPose skeleton generator"""
+    """Dedicated OpenPose skeleton generator - WORKING VERSION"""
     
     def __init__(self):
         print("🦴 Initializing OpenPose Skeleton Generator...")
@@ -430,7 +430,7 @@ class OpenPoseSkeleton:
         return skeleton
 
 class OpenPoseBatchProcessor:
-    """Batch processor using OpenPose skeletons"""
+    """Batch processor using OpenPose skeletons - REFINED FROM WORKING VERSION"""
     
     def __init__(self):
         print("🚀 OpenPose Batch Processor")
@@ -517,10 +517,10 @@ class OpenPoseBatchProcessor:
             return None
     
     def _generate_optimized_prompt(self, character: CharacterProfile, skeleton_scope: str = "full_body") -> str:
-        """Generate scope-aware prompt (full body vs portrait)"""
+        """Generate scope-aware prompt with MINIMAL changes for eye fix"""
         prompt_parts = []
         
-        # Scope-specific base prompts
+        # Scope-specific base prompts (KEEP EXACTLY THE SAME AS WORKING VERSION)
         if skeleton_scope == "portrait":
             prompt_parts.append("photorealistic portrait")
             prompt_parts.append("beautiful woman")
@@ -532,16 +532,16 @@ class OpenPoseBatchProcessor:
             prompt_parts.append("complete figure")
             prompt_parts.append("full body pose")
         
-        # Enhanced facial features (always important)
+        # Enhanced facial features (KEEP THE SAME)
         prompt_parts.append("perfect facial features")
         prompt_parts.append("symmetrical face")
         
-        # Character specifics
+        # Character specifics (KEEP THE SAME)
         age_factor = character.facial.age_factor
         if age_factor < 0.4:
             prompt_parts.append("young woman")
         
-        # Enhanced features
+        # Enhanced features (KEEP THE SAME)
         hair_color = character.hair.color
         if hair_color[0] > 0.8 and hair_color[1] > 0.7:
             prompt_parts.append("long blonde wavy hair")
@@ -551,12 +551,15 @@ class OpenPoseBatchProcessor:
             prompt_parts.append("bright blue eyes")
             prompt_parts.append("beautiful eyelashes")
         
-        # Facial details
+        # Facial details (KEEP THE SAME + MINIMAL EYE FIX)
         prompt_parts.append("perfect nose")
         prompt_parts.append("natural lips")
         prompt_parts.append("clear skin")
         
-        # Clothing (only for full body)
+        # MINIMAL EYE FIX: Add only one small eye detail
+        prompt_parts.append("detailed pupils")
+        
+        # Clothing (only for full body) (KEEP THE SAME)
         if skeleton_scope == "full_body":
             clothing_styles = {
                 "athletic_top": "blue sports bra",
@@ -567,7 +570,7 @@ class OpenPoseBatchProcessor:
             clothing = clothing_styles.get(character.clothing.shirt_type, "blue athletic top")
             prompt_parts.append(clothing)
         
-        # Quality terms
+        # Quality terms (KEEP EXACTLY THE SAME)
         if skeleton_scope == "portrait":
             prompt_parts.extend([
                 "professional headshot", "studio portrait lighting",
@@ -584,7 +587,7 @@ class OpenPoseBatchProcessor:
         return prompt
     
     def _generate_negative_prompt(self, skeleton_scope: str = "full_body") -> str:
-        """Generate scope-aware negative prompt"""
+        """Generate scope-aware negative prompt with MINIMAL eye fix"""
         base_negative = [
             "distorted face", "asymmetrical features", "wrong eye shape",
             "crooked nose", "unnatural mouth", "facial deformity",
@@ -594,14 +597,19 @@ class OpenPoseBatchProcessor:
             "blurry face", "low quality", "deformed"
         ]
         
+        # MINIMAL EYE FIX: Add only essential eye negatives
+        base_negative.extend([
+            "empty eyes", "no pupils", "blank eyes"
+        ])
+        
         if skeleton_scope == "portrait":
-            # Portrait-specific negatives
+            # Portrait-specific negatives (KEEP THE SAME)
             base_negative.extend([
                 "full body", "legs", "feet", "torso showing",
                 "cropped awkwardly", "body parts", "shoulders cut off"
             ])
         else:  # full_body
-            # Full body specific negatives
+            # Full body specific negatives (KEEP THE SAME)
             base_negative.extend([
                 "floating limbs", "disconnected body parts",
                 "cropped legs", "missing limbs", "incomplete body",
@@ -611,7 +619,7 @@ class OpenPoseBatchProcessor:
         return ", ".join(base_negative)
     
     def _generate_human(self, skeleton: np.ndarray, skeleton_scope: str, character: CharacterProfile, image_name: str) -> Optional[np.ndarray]:
-        """Generate AI human with scope-aware prompting"""
+        """Generate AI human - KEEP EXACT SETTINGS THAT WORKED"""
         if not self.pipe:
             return None
         
@@ -627,7 +635,7 @@ class OpenPoseBatchProcessor:
             
             start_time = time.time()
             
-            # Scope-specific generation settings
+            # KEEP EXACT SETTINGS THAT WORKED PERFECTLY
             if skeleton_scope == "portrait":
                 steps = 35  # More steps for facial detail
                 guidance = 9.0  # Higher guidance for face
@@ -637,7 +645,7 @@ class OpenPoseBatchProcessor:
                 guidance = 8.5
                 control_scale = 1.0
             
-            # Generate with scope-optimized settings
+            # Generate with scope-optimized settings (KEEP EXACT SAME SETTINGS)
             with torch.autocast(self.device):
                 result = self.pipe(
                     prompt=prompt,
@@ -646,7 +654,7 @@ class OpenPoseBatchProcessor:
                     num_inference_steps=steps,
                     guidance_scale=guidance,
                     controlnet_conditioning_scale=control_scale,
-                    generator=torch.Generator(device=self.device).manual_seed(123),
+                    generator=torch.Generator(device=self.device).manual_seed(123),  # KEEP SAME SEED
                     width=512,
                     height=512,
                 )
@@ -687,12 +695,13 @@ class OpenPoseBatchProcessor:
                 print(f"❌ No images found in {input_folder}")
                 return
             
-            print(f"\n🚀 OPENPOSE BATCH PROCESSING")
+            print(f"\n🚀 REFINED OPENPOSE PROCESSING")
             print("=" * 45)
             print(f"📁 Input: {input_folder}")
             print(f"📁 Output: {output_folder}")
             print(f"👤 Character: {character.name}")
             print(f"📸 Images: {len(image_files)}")
+            print(f"🎯 Goal: Keep amazing quality + fix eye pupils")
             
             # Process each image
             start_time = time.time()
@@ -713,11 +722,11 @@ class OpenPoseBatchProcessor:
                         
                         if ai_result is not None:
                             # Save results
-                            output_file = output_path / f"openpose_human_{image_file.stem}.png"
+                            output_file = output_path / f"refined_human_{image_file.stem}.png"
                             cv2.imwrite(str(output_file), cv2.cvtColor(ai_result, cv2.COLOR_RGB2BGR))
                             
                             # Save skeleton
-                            skeleton_file = output_path / f"openpose_skeleton_{image_file.stem}.png"
+                            skeleton_file = output_path / f"refined_skeleton_{image_file.stem}.png"
                             cv2.imwrite(str(skeleton_file), skeleton)
                             
                             self.successful_generations += 1
@@ -749,20 +758,21 @@ class OpenPoseBatchProcessor:
             total_time = time.time() - start_time
             success_rate = (self.successful_generations / self.total_processed * 100) if self.total_processed > 0 else 0
             
-            print(f"\n🎉 PROCESSING COMPLETE!")
+            print(f"\n🎉 REFINED PROCESSING COMPLETE!")
             print("=" * 30)
             print(f"⏰ Total time: {total_time/60:.1f} minutes")
             print(f"✅ Successful: {self.successful_generations}")
             print(f"❌ Failed: {self.failed_generations}")
             print(f"📊 Success rate: {success_rate:.1f}%")
+            print(f"🎯 Refinement: Added 'detailed pupils' to fix eyes")
             
         finally:
             allow_sleep()
 
 def main():
     """Main function"""
-    print("OpenPose-Based AI Human Generator")
-    print("=" * 40)
+    print("Refined OpenPose-Based AI Human Generator")
+    print("=" * 45)
     
     if not AI_AVAILABLE:
         print("❌ AI libraries required!")
@@ -784,7 +794,7 @@ def main():
         print("❌ Folder not found!")
         return
     
-    output_folder = input("📁 Output folder: ").strip() or "openpose_humans"
+    output_folder = input("📁 Output folder: ").strip() or "refined_humans"
     character_file = input("👤 Character JSON file: ").strip()
     
     if not Path(character_file).exists():

@@ -566,20 +566,22 @@ class FiveStageProcessor:
                 face = max(faces, key=lambda f: f[2] * f[3])
                 x, y, w, h = face
                 
-                # Expand face region by 30% for context
-                padding = int(min(w, h) * 0.3)
+                # Expand face region by 20% for better blending context
+                padding = int(min(w, h) * 0.2)
                 x = max(0, x - padding)
                 y = max(0, y - padding)
                 w = min(image.shape[1] - x, w + 2 * padding)
                 h = min(image.shape[0] - y, h + 2 * padding)
                 
-                # Crop face region
-                face_crop = image[y:y+h, x:x+w]
-                
-                # Resize to 512x512 for processing
-                face_resized = cv2.resize(face_crop, (512, 512))
-                
-                return face_resized, (x, y, w, h)
+                # Make sure coordinates are valid
+                if x + w <= image.shape[1] and y + h <= image.shape[0]:
+                    # Crop face region
+                    face_crop = image[y:y+h, x:x+w]
+                    
+                    # Resize to 512x512 for processing
+                    face_resized = cv2.resize(face_crop, (512, 512))
+                    
+                    return face_resized, (x, y, w, h)
             
             return None, None
             
@@ -589,7 +591,7 @@ class FiveStageProcessor:
     
     def _paste_face_back(self, original_image: np.ndarray, new_face: np.ndarray, 
                         face_coords: Tuple[int, int, int, int]) -> np.ndarray:
-        """Paste the refined face back into the original image"""
+        """Paste the refined face back with targeted blending - preserve facial features"""
         try:
             x, y, w, h = face_coords
             
@@ -599,13 +601,57 @@ class FiveStageProcessor:
             # Create a copy of the original image
             result = original_image.copy()
             
-            # Paste the new face
-            result[y:y+h, x:x+w] = face_resized
+            # Create a targeted mask that preserves core facial features
+            mask = np.zeros((h, w, 3), dtype=np.float32)
+            
+            # Strong replacement in center (face core) - where eyes, nose, mouth are
+            center_h, center_w = h // 2, w // 2
+            core_h, core_w = int(h * 0.6), int(w * 0.6)  # 60% of face area
+            
+            # Create core face region (strong replacement)
+            start_y = max(0, center_h - core_h // 2)
+            end_y = min(h, center_h + core_h // 2)
+            start_x = max(0, center_w - core_w // 2)
+            end_x = min(w, center_w + core_w // 2)
+            
+            # Full replacement in core facial area
+            mask[start_y:end_y, start_x:end_x] = 1.0
+            
+            # Soft blending only at edges (preserve hair and outer areas)
+            feather_size = min(w, h) // 12  # Smaller feather for sharper face
+            
+            # Create gradient only at the very edges
+            for i in range(feather_size):
+                alpha = i / feather_size
+                
+                # Only feather the outer edges, not the core
+                # Top edge
+                if i < start_y:
+                    mask[i, :] *= alpha
+                # Bottom edge  
+                if end_y + i < h:
+                    mask[end_y + i, :] *= (1 - alpha)
+                # Left edge
+                if i < start_x:
+                    mask[:, i] *= alpha
+                # Right edge
+                if end_x + i < w:
+                    mask[:, end_x + i] *= (1 - alpha)
+            
+            # Apply targeted blending
+            face_float = face_resized.astype(np.float32) / 255.0
+            original_region = result[y:y+h, x:x+w].astype(np.float32) / 255.0
+            
+            # Blend with targeted mask (strong in center, soft at edges)
+            blended = face_float * mask + original_region * (1 - mask)
+            
+            # Convert back and paste
+            result[y:y+h, x:x+w] = (blended * 255).astype(np.uint8)
             
             return result
             
         except Exception as e:
-            print(f"   Face pasting error: {e}")
+            print(f"   Face blending error: {e}")
             return original_image
     
     def _generate_five_stage_human(self, skeleton: np.ndarray, skeleton_scope: str, 
@@ -740,18 +786,18 @@ class FiveStageProcessor:
                         prompt=stage5_prompt,
                         negative_prompt=stage5_negative,
                         image=face_pil,
-                        strength=0.7,  # Strong refinement for face
-                        num_inference_steps=40,  # Many steps for face quality
-                        guidance_scale=12.0,  # Very high guidance for human face
+                        strength=0.8,  # Stronger refinement for better face features
+                        num_inference_steps=45,  # More steps for facial quality
+                        guidance_scale=15.0,  # Very high guidance for human-like face
                         generator=torch.Generator(device=self.device).manual_seed(999),
                     )
                 
                 stage5_time = time.time() - stage5_start
                 new_face = np.array(stage5_result.images[0])
                 
-                # Paste refined face back
+                # Paste refined face back with targeted blending (preserve core features)
                 final_image = self._paste_face_back(stage4_image, new_face, face_coords)
-                print(f"   ✅ Stage 5 complete in {stage5_time:.1f}s")
+                print(f"   ✅ Stage 5 complete in {stage5_time:.1f}s (targeted blend - core preserved)")
                 
             else:
                 print("   ❌ No face detected, using Stage 4 result")
